@@ -1,39 +1,68 @@
 import random
 
 
-def run_simulation(k=0.25, steps=20):
+def generate_scenario(steps=20, price_move_size=1):
+    price_moves = [0]
+    trade_draws = []
+    order_draws = []
+
+    for step in range(steps):
+        if step > 0:
+            price_moves.append(
+                random.choice(
+                    [-price_move_size, price_move_size]
+                )
+            )
+
+        trade_draws.append(random.random())
+        order_draws.append(random.random())
+
+    return {
+        "price_moves": price_moves,
+        "trade_draws": trade_draws,
+        "order_draws": order_draws,
+    }
+
+
+def run_simulation(
+    scenario,
+    k=0.25,
+    steps=20
+):
     fair_value = 100
     half_spread = 1
 
     customer_sensitivity = 0.2
     spread_sensitivity = 0.25
 
-    price_move_size = 1
     inventory_limit = 5
 
     cash = 0
     inventory = 0
-
     max_abs_inventory = 0
 
     for trade in range(1, steps + 1):
 
-        # 1. Fair value moves
-        if trade > 1:
-            price_move = random.choice(
-                [-price_move_size, price_move_size]
-            )
-            fair_value += price_move
+        # 1. Fair value movement
+        price_move = (
+            scenario["price_moves"][trade - 1]
+        )
+
+        fair_value += price_move
 
         # 2. Inventory-aware quote
-        quote_centre = fair_value - k * inventory
+        quote_centre = (
+            fair_value - k * inventory
+        )
 
         bid = quote_centre - half_spread
         ask = quote_centre + half_spread
 
-        # 3. Probability that a customer trades
+        # 3. Probability a customer trades
         trade_probability = (
-            1 - spread_sensitivity * half_spread
+            1
+            - spread_sensitivity
+            * half_spread
         )
 
         trade_probability = max(
@@ -41,12 +70,13 @@ def run_simulation(k=0.25, steps=20):
             min(0.95, trade_probability)
         )
 
-        trade_draw = random.random()
+        trade_draw = (
+            scenario["trade_draws"][trade - 1]
+        )
 
-        # 4. If a trade occurs
+        # 4. Customer trades
         if trade_draw < trade_probability:
 
-            # Probability customer BUYS from us
             buy_probability = (
                 0.5
                 + customer_sensitivity
@@ -58,14 +88,16 @@ def run_simulation(k=0.25, steps=20):
                 min(0.95, buy_probability)
             )
 
-            order_draw = random.random()
+            order_draw = (
+                scenario["order_draws"][trade - 1]
+            )
 
             if order_draw < buy_probability:
                 order = "BUY"
             else:
                 order = "SELL"
 
-            # 5. Inventory-limit check
+            # 5. Hard inventory limit
             if (
                 order == "SELL"
                 and inventory >= inventory_limit
@@ -79,141 +111,169 @@ def run_simulation(k=0.25, steps=20):
                 pass
 
             else:
-                # 6. Execute trade
+                # 6. Execute
                 if order == "SELL":
-                    execution_price = bid
-
-                    cash -= execution_price
+                    cash -= bid
                     inventory += 1
 
                 else:
-                    execution_price = ask
-
-                    cash += execution_price
+                    cash += ask
                     inventory -= 1
 
-        # 7. Track maximum inventory exposure
+        # 7. Inventory-risk tracking
         max_abs_inventory = max(
             max_abs_inventory,
             abs(inventory)
         )
 
-    # 8. Final mark-to-market PnL
     pnl = cash + inventory * fair_value
 
     return pnl, max_abs_inventory
 
 
-def run_many_simulations(k, simulations=1000):
-    pnls = []
-    max_inventories = []
+# ------------------------------------
+# Paired simulations
+# ------------------------------------
 
-    for _ in range(simulations):
-        pnl, max_inventory = run_simulation(k=k)
+simulations = 1000
 
-        pnls.append(pnl)
-        max_inventories.append(max_inventory)
+ia_pnls = []
+baseline_pnls = []
 
-    average_pnl = sum(pnls) / len(pnls)
+ia_max_inventories = []
+baseline_max_inventories = []
 
-    average_max_inventory = (
-        sum(max_inventories)
-        / len(max_inventories)
+for _ in range(simulations):
+
+    # ONE scenario shared by both strategies
+    scenario = generate_scenario()
+
+    ia_pnl, ia_max_inventory = (
+        run_simulation(
+            scenario=scenario,
+            k=0.25
+        )
     )
 
-    worst_pnl = min(pnls)
-    best_pnl = max(pnls)
-
-    return {
-        "average_pnl": average_pnl,
-        "average_max_inventory": average_max_inventory,
-        "worst_pnl": worst_pnl,
-        "best_pnl": best_pnl,
-    }
-
-
-# ------------------------------
-# Inventory-Aware Strategy
-# ------------------------------
-
-inventory_aware_results = run_many_simulations(
-    k=0.25,
-    simulations=1000
-)
-
-print("INVENTORY-AWARE STRATEGY")
-print(
-    "Average PnL:",
-    round(
-        inventory_aware_results["average_pnl"],
-        2
+    baseline_pnl, baseline_max_inventory = (
+        run_simulation(
+            scenario=scenario,
+            k=0
+        )
     )
-)
-print(
-    "Average Max Inventory:",
-    round(
-        inventory_aware_results[
-            "average_max_inventory"
-        ],
-        2
+
+    ia_pnls.append(ia_pnl)
+    baseline_pnls.append(baseline_pnl)
+
+    ia_max_inventories.append(
+        ia_max_inventory
     )
-)
-print(
-    "Worst PnL:",
-    round(
-        inventory_aware_results["worst_pnl"],
-        2
+
+    baseline_max_inventories.append(
+        baseline_max_inventory
     )
-)
-print(
-    "Best PnL:",
-    round(
-        inventory_aware_results["best_pnl"],
-        2
-    )
+
+
+# ------------------------------------
+# Summary statistics
+# ------------------------------------
+
+average_ia_pnl = (
+    sum(ia_pnls) / simulations
 )
 
+average_baseline_pnl = (
+    sum(baseline_pnls) / simulations
+)
+
+average_ia_inventory = (
+    sum(ia_max_inventories)
+    / simulations
+)
+
+average_baseline_inventory = (
+    sum(baseline_max_inventories)
+    / simulations
+)
+
+
+pnl_differences = [
+    ia_pnls[i] - baseline_pnls[i]
+    for i in range(simulations)
+]
+
+inventory_differences = [
+    ia_max_inventories[i]
+    - baseline_max_inventories[i]
+    for i in range(simulations)
+]
+
+
+average_pnl_difference = (
+    sum(pnl_differences)
+    / simulations
+)
+
+average_inventory_difference = (
+    sum(inventory_differences)
+    / simulations
+)
+
+
+ia_pnl_wins = sum(
+    1
+    for diff in pnl_differences
+    if diff > 0
+)
+
+ia_inventory_wins = sum(
+    1
+    for diff in inventory_differences
+    if diff < 0
+)
+
+
+print("PAIRED SIMULATION RESULTS")
+print()
+
+print("Inventory-Aware Average PnL:")
+print(round(average_ia_pnl, 2))
+
+print("Baseline Average PnL:")
+print(round(average_baseline_pnl, 2))
 
 print()
 
+print("Inventory-Aware Average Max Inventory:")
+print(round(average_ia_inventory, 2))
 
-# ------------------------------
-# Baseline Strategy
-# ------------------------------
+print("Baseline Average Max Inventory:")
+print(round(average_baseline_inventory, 2))
 
-baseline_results = run_many_simulations(
-    k=0,
-    simulations=1000
+print()
+
+print(
+    "Average PnL Difference (IA - Baseline):",
+    round(average_pnl_difference, 2)
 )
 
-print("BASELINE STRATEGY")
 print(
-    "Average PnL:",
-    round(
-        baseline_results["average_pnl"],
-        2
-    )
+    "Average Max Inventory Difference (IA - Baseline):",
+    round(average_inventory_difference, 2)
 )
+
+print()
+
 print(
-    "Average Max Inventory:",
-    round(
-        baseline_results[
-            "average_max_inventory"
-        ],
-        2
-    )
+    "IA Higher PnL:",
+    ia_pnl_wins,
+    "/",
+    simulations
 )
+
 print(
-    "Worst PnL:",
-    round(
-        baseline_results["worst_pnl"],
-        2
-    )
-)
-print(
-    "Best PnL:",
-    round(
-        baseline_results["best_pnl"],
-        2
-    )
+    "IA Lower Max Inventory:",
+    ia_inventory_wins,
+    "/",
+    simulations
 )
