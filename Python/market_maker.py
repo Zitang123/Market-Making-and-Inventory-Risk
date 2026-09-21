@@ -1,5 +1,6 @@
 import random
-
+import statistics
+import matplotlib.pyplot as plt
 
 def generate_scenario(steps=20, price_move_size=1):
     price_moves = [0]
@@ -232,6 +233,30 @@ ia_inventory_wins = sum(
     if diff < 0
 )
 
+ia_std = statistics.stdev(ia_pnls)
+baseline_std = statistics.stdev(baseline_pnls)
+
+ia_median = statistics.median(ia_pnls)
+baseline_median = statistics.median(baseline_pnls)
+
+ia_loss_probability = (
+    sum(1 for pnl in ia_pnls if pnl < 0)
+    / simulations
+)
+
+baseline_loss_probability = (
+    sum(1 for pnl in baseline_pnls if pnl < 0)
+    / simulations 
+)
+
+
+sorted_ia = sorted(ia_pnls)
+sorted_baseline = sorted(baseline_pnls)
+
+index_5 = int(0.05 * simulations)
+
+ia_5th_percentile = sorted_ia[index_5]
+baseline_5th_percentile = sorted_baseline[index_5]
 
 print("PAIRED SIMULATION RESULTS")
 print()
@@ -277,3 +302,61 @@ print(
     "/",
     simulations
 )
+
+
+
+print()
+print("RISK STATISTICS")
+print()
+
+print("Inventory-Aware")
+print("Median PnL:", round(ia_median, 2))
+print("PnL Standard Deviation:", round(ia_std, 2))
+print(
+    "Probability of Loss:",
+    round(ia_loss_probability * 100, 2),
+    "%"
+)
+print(
+    "5th Percentile PnL:",
+    round(ia_5th_percentile, 2)
+)
+
+print()
+
+print("Baseline")
+print("Median PnL:", round(baseline_median, 2))
+print(
+    "PnL Standard Deviation:",
+    round(baseline_std, 2)
+)
+print(
+    "Probability of Loss:",
+    round(baseline_loss_probability * 100, 2),
+    "%"
+)
+print(
+    "5th Percentile PnL:",
+    round(baseline_5th_percentile, 2)
+)
+
+plt.hist(
+    ia_pnls,
+    bins = 30,
+    alpha = 0.5,
+    label = "Inventory-Aware"
+)
+
+plt.hist(
+    baseline_pnls,
+    bins=30,
+    alpha=0.5,
+    label = "Baseline"
+)
+
+plt.xlabel("Final PnL")
+plt.ylabel("Frequency")
+plt.title("Distribution of Final PnL")
+plt.legend()
+
+plt.show()
