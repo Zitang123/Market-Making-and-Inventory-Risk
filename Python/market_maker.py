@@ -2,24 +2,22 @@ import random
 import statistics
 import matplotlib.pyplot as plt
 
-def generate_scenario(steps=20, price_move_size=1):
-    price_moves = [0]
+def generate_scenario(steps=20):
+    price_directions = [0]
     trade_draws = []
     order_draws = []
 
     for step in range(steps):
         if step > 0:
-            price_moves.append(
-                random.choice(
-                    [-price_move_size, price_move_size]
-                )
+            price_directions.append(
+                random.choice([-1, 1])
             )
 
         trade_draws.append(random.random())
         order_draws.append(random.random())
 
     return {
-        "price_moves": price_moves,
+        "price_directions": price_directions,
         "trade_draws": trade_draws,
         "order_draws": order_draws,
     }
@@ -28,7 +26,8 @@ def generate_scenario(steps=20, price_move_size=1):
 def run_simulation(
     scenario,
     k=0.25,
-    steps=20
+    steps=20,
+    price_move_size=1
 ):
     fair_value = 100
     half_spread = 1
@@ -46,10 +45,12 @@ def run_simulation(
 
         # 1. Fair value movement
         price_move = (
-            scenario["price_moves"][trade - 1]
+            scenario["price_directions"][trade - 1]
+            * price_move_size
         )
 
         fair_value += price_move
+
 
         # 2. Inventory-aware quote
         quote_centre = (
@@ -360,3 +361,198 @@ plt.title("Distribution of Final PnL")
 plt.legend()
 
 plt.show()
+
+
+simulations = 1000
+
+k_values = [
+    0,
+    0.1,
+    0.25,
+    0.5,
+    1.0
+]
+
+
+# Generate the scenarios ONCE
+scenarios = [
+    generate_scenario()
+    for _ in range(simulations)
+]
+
+
+results = []
+
+
+for k in k_values:
+
+    pnls = []
+    max_inventories = []
+
+    # Every k uses the SAME scenarios
+    for scenario in scenarios:
+
+        pnl, max_inventory = run_simulation(
+            scenario=scenario,
+            k=k
+        )
+
+        pnls.append(pnl)
+        max_inventories.append(max_inventory)
+
+
+    average_pnl = sum(pnls) / simulations
+
+    pnl_std = statistics.stdev(pnls)
+
+    average_max_inventory = (
+        sum(max_inventories)
+        / simulations
+    )
+
+    loss_probability = (
+        sum(1 for pnl in pnls if pnl < 0)
+        / simulations
+    )
+
+    sorted_pnls = sorted(pnls)
+
+    fifth_percentile = sorted_pnls[
+        int(0.05 * simulations)
+    ]
+
+
+    results.append({
+        "k": k,
+        "average_pnl": average_pnl,
+        "pnl_std": pnl_std,
+        "average_max_inventory": average_max_inventory,
+        "loss_probability": loss_probability,
+        "fifth_percentile": fifth_percentile,
+    })
+
+
+# ------------------------------------
+# PRINT RESULTS
+# ------------------------------------
+
+print()
+print("INVENTORY SENSITIVITY RESULTS")
+print()
+
+print(
+    f"{'k':<8}"
+    f"{'Avg PnL':<12}"
+    f"{'PnL SD':<12}"
+    f"{'Avg Max Inv':<14}"
+    f"{'Loss %':<12}"
+    f"{'5th % PnL':<12}"
+)
+
+print("-" * 70)
+
+
+for result in results:
+
+    print(
+        f"{result['k']:<8}"
+        f"{result['average_pnl']:<12.2f}"
+        f"{result['pnl_std']:<12.2f}"
+        f"{result['average_max_inventory']:<14.2f}"
+        f"{result['loss_probability'] * 100:<12.2f}"
+        f"{result['fifth_percentile']:<12.2f}"
+    )
+
+
+
+simulations = 1000
+
+volatility_values = [
+    0.5,
+    1.0,
+    2.0,
+    3.0
+]
+
+scenarios = [
+    generate_scenario()
+    for _ in range(simulations)
+]
+
+volatility_results = []
+
+
+for volatility in volatility_values:
+
+    pnls = []
+    max_inventories = []
+
+    for scenario in scenarios:
+
+        pnl, max_inventory = run_simulation(
+            scenario=scenario,
+            k=0.25,
+            price_move_size=volatility
+        )
+
+        pnls.append(pnl)
+        max_inventories.append(max_inventory)
+
+
+    average_pnl = sum(pnls) / simulations
+
+    pnl_std = statistics.stdev(pnls)
+
+    average_max_inventory = (
+        sum(max_inventories)
+        / simulations
+    )
+
+    loss_probability = (
+        sum(1 for pnl in pnls if pnl < 0)
+        / simulations
+    )
+
+    sorted_pnls = sorted(pnls)
+
+    fifth_percentile = sorted_pnls[
+        int(0.05 * simulations)
+    ]
+
+
+    volatility_results.append({
+        "volatility": volatility,
+        "average_pnl": average_pnl,
+        "pnl_std": pnl_std,
+        "average_max_inventory": average_max_inventory,
+        "loss_probability": loss_probability,
+        "fifth_percentile": fifth_percentile,
+    })
+
+
+print()
+print("VOLATILITY SENSITIVITY RESULTS")
+print()
+
+print(
+    f"{'Move':<8}"
+    f"{'Avg PnL':<12}"
+    f"{'PnL SD':<12}"
+    f"{'Avg Max Inv':<14}"
+    f"{'Loss %':<12}"
+    f"{'5th % PnL':<12}"
+)
+
+print("-" * 70)
+
+
+for result in volatility_results:
+
+    print(
+        f"{result['volatility']:<8.2f}"
+        f"{result['average_pnl']:<12.2f}"
+        f"{result['pnl_std']:<12.2f}"
+        f"{result['average_max_inventory']:<14.2f}"
+        f"{result['loss_probability'] * 100:<12.2f}"
+        f"{result['fifth_percentile']:<12.2f}"
+    )
