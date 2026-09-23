@@ -1,20 +1,43 @@
 import random
 import statistics
-import matplotlib.pyplot as plt
+
+
+# --------------------------------------------------
+# GENERATE ONE RANDOM MARKET SCENARIO
+# --------------------------------------------------
 
 def generate_scenario(steps=20):
+    """
+    Generates the random components of one market scenario.
+
+    These are generated separately from the strategy so that
+    different strategies/parameters can face the exact same
+    underlying randomness.
+    """
+
+    # Trade 1 begins with no price movement
     price_directions = [0]
+
     trade_draws = []
     order_draws = []
 
     for step in range(steps):
+
+        # From Trade 2 onwards, fair value moves up or down
         if step > 0:
             price_directions.append(
                 random.choice([-1, 1])
             )
 
-        trade_draws.append(random.random())
-        order_draws.append(random.random())
+        # Determines whether a customer trades
+        trade_draws.append(
+            random.random()
+        )
+
+        # Determines BUY vs SELL
+        order_draws.append(
+            random.random()
+        )
 
     return {
         "price_directions": price_directions,
@@ -23,62 +46,103 @@ def generate_scenario(steps=20):
     }
 
 
+# --------------------------------------------------
+# RUN ONE MARKET-MAKING SIMULATION
+# --------------------------------------------------
+
 def run_simulation(
     scenario,
     k=0.25,
     steps=20,
-    price_move_size=1
+    price_move_size=1,
+    inventory_limit=5
 ):
+    # Starting market parameters
     fair_value = 100
     half_spread = 1
 
+    # Customer behaviour parameters
     customer_sensitivity = 0.2
     spread_sensitivity = 0.25
 
-    inventory_limit = 5
-
+    # Starting market-maker position
     cash = 0
     inventory = 0
+
+    # Risk statistics
     max_abs_inventory = 0
+    rejected_trades = 0
+
+
+    # --------------------------------------------------
+    # RUN THROUGH EACH TRADING STEP
+    # --------------------------------------------------
 
     for trade in range(1, steps + 1):
 
-        # 1. Fair value movement
-        price_move = (
+        # ----------------------------------------------
+        # 1. FAIR VALUE MOVEMENT
+        # ----------------------------------------------
+
+        price_direction = (
             scenario["price_directions"][trade - 1]
-            * price_move_size
+        )
+
+        price_move = (
+            price_direction * price_move_size
         )
 
         fair_value += price_move
 
 
-        # 2. Inventory-aware quote
+        # ----------------------------------------------
+        # 2. INVENTORY-AWARE QUOTING
+        # ----------------------------------------------
+
         quote_centre = (
             fair_value - k * inventory
         )
 
-        bid = quote_centre - half_spread
-        ask = quote_centre + half_spread
+        bid = (
+            quote_centre - half_spread
+        )
 
-        # 3. Probability a customer trades
+        ask = (
+            quote_centre + half_spread
+        )
+
+
+        # ----------------------------------------------
+        # 3. PROBABILITY THAT CUSTOMER TRADES
+        # ----------------------------------------------
+
         trade_probability = (
             1
             - spread_sensitivity
             * half_spread
         )
 
+        # Keep probability valid
         trade_probability = max(
             0.05,
-            min(0.95, trade_probability)
+            min(
+                0.95,
+                trade_probability
+            )
         )
 
         trade_draw = (
             scenario["trade_draws"][trade - 1]
         )
 
-        # 4. Customer trades
+
+        # ----------------------------------------------
+        # 4. CUSTOMER DECIDES WHETHER TO TRADE
+        # ----------------------------------------------
+
         if trade_draw < trade_probability:
 
+            # Probability that customer BUYS from us
             buy_probability = (
                 0.5
                 + customer_sensitivity
@@ -87,472 +151,273 @@ def run_simulation(
 
             buy_probability = max(
                 0.05,
-                min(0.95, buy_probability)
+                min(
+                    0.95,
+                    buy_probability
+                )
             )
 
             order_draw = (
                 scenario["order_draws"][trade - 1]
             )
 
+
+            # ------------------------------------------
+            # 5. BUY OR SELL?
+            # ------------------------------------------
+
             if order_draw < buy_probability:
                 order = "BUY"
+
             else:
                 order = "SELL"
 
-            # 5. Hard inventory limit
+
+            # ------------------------------------------
+            # 6. CHECK HARD INVENTORY LIMIT
+            # ------------------------------------------
+
+            # Customer SELL means we would BUY one more
             if (
                 order == "SELL"
                 and inventory >= inventory_limit
             ):
-                pass
+                rejected_trades += 1
 
+
+            # Customer BUY means we would SELL one more
             elif (
                 order == "BUY"
                 and inventory <= -inventory_limit
             ):
-                pass
+                rejected_trades += 1
+
+
+            # ------------------------------------------
+            # 7. EXECUTE TRADE
+            # ------------------------------------------
 
             else:
-                # 6. Execute
+
+                # Customer SELLS to us
                 if order == "SELL":
+
                     cash -= bid
                     inventory += 1
 
+
+                # Customer BUYS from us
                 else:
+
                     cash += ask
                     inventory -= 1
 
-        # 7. Inventory-risk tracking
+
+        # ----------------------------------------------
+        # 8. TRACK MAXIMUM INVENTORY EXPOSURE
+        # ----------------------------------------------
+
         max_abs_inventory = max(
             max_abs_inventory,
             abs(inventory)
         )
 
-    pnl = cash + inventory * fair_value
 
-    return pnl, max_abs_inventory
+    # --------------------------------------------------
+    # FINAL MARK-TO-MARKET PnL
+    # --------------------------------------------------
+
+    pnl = (
+        cash
+        + inventory * fair_value
+    )
 
 
-# ------------------------------------
-# Paired simulations
-# ------------------------------------
+    return (
+        pnl,
+        max_abs_inventory,
+        rejected_trades
+    )
+
+
+# ==================================================
+# DAY 24:
+# REPEATED INVENTORY-LIMIT SENSITIVITY ANALYSIS
+# ==================================================
 
 simulations = 1000
 
-ia_pnls = []
-baseline_pnls = []
-
-ia_max_inventories = []
-baseline_max_inventories = []
-
-for _ in range(simulations):
-
-    # ONE scenario shared by both strategies
-    scenario = generate_scenario()
-
-    ia_pnl, ia_max_inventory = (
-        run_simulation(
-            scenario=scenario,
-            k=0.25
-        )
-    )
-
-    baseline_pnl, baseline_max_inventory = (
-        run_simulation(
-            scenario=scenario,
-            k=0
-        )
-    )
-
-    ia_pnls.append(ia_pnl)
-    baseline_pnls.append(baseline_pnl)
-
-    ia_max_inventories.append(
-        ia_max_inventory
-    )
-
-    baseline_max_inventories.append(
-        baseline_max_inventory
-    )
-
-
-# ------------------------------------
-# Summary statistics
-# ------------------------------------
-
-average_ia_pnl = (
-    sum(ia_pnls) / simulations
-)
-
-average_baseline_pnl = (
-    sum(baseline_pnls) / simulations
-)
-
-average_ia_inventory = (
-    sum(ia_max_inventories)
-    / simulations
-)
-
-average_baseline_inventory = (
-    sum(baseline_max_inventories)
-    / simulations
-)
-
-
-pnl_differences = [
-    ia_pnls[i] - baseline_pnls[i]
-    for i in range(simulations)
-]
-
-inventory_differences = [
-    ia_max_inventories[i]
-    - baseline_max_inventories[i]
-    for i in range(simulations)
+inventory_limits = [
+    2,
+    3,
+    5,
+    10
 ]
 
 
-average_pnl_difference = (
-    sum(pnl_differences)
-    / simulations
-)
+# --------------------------------------------------
+# GENERATE THE MARKET SCENARIOS ONCE
+# --------------------------------------------------
 
-average_inventory_difference = (
-    sum(inventory_differences)
-    / simulations
-)
-
-
-ia_pnl_wins = sum(
-    1
-    for diff in pnl_differences
-    if diff > 0
-)
-
-ia_inventory_wins = sum(
-    1
-    for diff in inventory_differences
-    if diff < 0
-)
-
-ia_std = statistics.stdev(ia_pnls)
-baseline_std = statistics.stdev(baseline_pnls)
-
-ia_median = statistics.median(ia_pnls)
-baseline_median = statistics.median(baseline_pnls)
-
-ia_loss_probability = (
-    sum(1 for pnl in ia_pnls if pnl < 0)
-    / simulations
-)
-
-baseline_loss_probability = (
-    sum(1 for pnl in baseline_pnls if pnl < 0)
-    / simulations 
-)
-
-
-sorted_ia = sorted(ia_pnls)
-sorted_baseline = sorted(baseline_pnls)
-
-index_5 = int(0.05 * simulations)
-
-ia_5th_percentile = sorted_ia[index_5]
-baseline_5th_percentile = sorted_baseline[index_5]
-
-print("PAIRED SIMULATION RESULTS")
-print()
-
-print("Inventory-Aware Average PnL:")
-print(round(average_ia_pnl, 2))
-
-print("Baseline Average PnL:")
-print(round(average_baseline_pnl, 2))
-
-print()
-
-print("Inventory-Aware Average Max Inventory:")
-print(round(average_ia_inventory, 2))
-
-print("Baseline Average Max Inventory:")
-print(round(average_baseline_inventory, 2))
-
-print()
-
-print(
-    "Average PnL Difference (IA - Baseline):",
-    round(average_pnl_difference, 2)
-)
-
-print(
-    "Average Max Inventory Difference (IA - Baseline):",
-    round(average_inventory_difference, 2)
-)
-
-print()
-
-print(
-    "IA Higher PnL:",
-    ia_pnl_wins,
-    "/",
-    simulations
-)
-
-print(
-    "IA Lower Max Inventory:",
-    ia_inventory_wins,
-    "/",
-    simulations
-)
-
-
-
-print()
-print("RISK STATISTICS")
-print()
-
-print("Inventory-Aware")
-print("Median PnL:", round(ia_median, 2))
-print("PnL Standard Deviation:", round(ia_std, 2))
-print(
-    "Probability of Loss:",
-    round(ia_loss_probability * 100, 2),
-    "%"
-)
-print(
-    "5th Percentile PnL:",
-    round(ia_5th_percentile, 2)
-)
-
-print()
-
-print("Baseline")
-print("Median PnL:", round(baseline_median, 2))
-print(
-    "PnL Standard Deviation:",
-    round(baseline_std, 2)
-)
-print(
-    "Probability of Loss:",
-    round(baseline_loss_probability * 100, 2),
-    "%"
-)
-print(
-    "5th Percentile PnL:",
-    round(baseline_5th_percentile, 2)
-)
-
-plt.hist(
-    ia_pnls,
-    bins = 30,
-    alpha = 0.5,
-    label = "Inventory-Aware"
-)
-
-plt.hist(
-    baseline_pnls,
-    bins=30,
-    alpha=0.5,
-    label = "Baseline"
-)
-
-plt.xlabel("Final PnL")
-plt.ylabel("Frequency")
-plt.title("Distribution of Final PnL")
-plt.legend()
-
-plt.show()
-
-
-simulations = 1000
-
-k_values = [
-    0,
-    0.1,
-    0.25,
-    0.5,
-    1.0
-]
-
-
-# Generate the scenarios ONCE
 scenarios = [
     generate_scenario()
     for _ in range(simulations)
 ]
 
 
-results = []
+# Store final results
+limit_results = []
 
 
-for k in k_values:
+# --------------------------------------------------
+# TEST EACH INVENTORY LIMIT
+# --------------------------------------------------
 
-    pnls = []
-    max_inventories = []
-
-    # Every k uses the SAME scenarios
-    for scenario in scenarios:
-
-        pnl, max_inventory = run_simulation(
-            scenario=scenario,
-            k=k
-        )
-
-        pnls.append(pnl)
-        max_inventories.append(max_inventory)
-
-
-    average_pnl = sum(pnls) / simulations
-
-    pnl_std = statistics.stdev(pnls)
-
-    average_max_inventory = (
-        sum(max_inventories)
-        / simulations
-    )
-
-    loss_probability = (
-        sum(1 for pnl in pnls if pnl < 0)
-        / simulations
-    )
-
-    sorted_pnls = sorted(pnls)
-
-    fifth_percentile = sorted_pnls[
-        int(0.05 * simulations)
-    ]
-
-
-    results.append({
-        "k": k,
-        "average_pnl": average_pnl,
-        "pnl_std": pnl_std,
-        "average_max_inventory": average_max_inventory,
-        "loss_probability": loss_probability,
-        "fifth_percentile": fifth_percentile,
-    })
-
-
-# ------------------------------------
-# PRINT RESULTS
-# ------------------------------------
-
-print()
-print("INVENTORY SENSITIVITY RESULTS")
-print()
-
-print(
-    f"{'k':<8}"
-    f"{'Avg PnL':<12}"
-    f"{'PnL SD':<12}"
-    f"{'Avg Max Inv':<14}"
-    f"{'Loss %':<12}"
-    f"{'5th % PnL':<12}"
-)
-
-print("-" * 70)
-
-
-for result in results:
-
-    print(
-        f"{result['k']:<8}"
-        f"{result['average_pnl']:<12.2f}"
-        f"{result['pnl_std']:<12.2f}"
-        f"{result['average_max_inventory']:<14.2f}"
-        f"{result['loss_probability'] * 100:<12.2f}"
-        f"{result['fifth_percentile']:<12.2f}"
-    )
-
-
-
-simulations = 1000
-
-volatility_values = [
-    0.5,
-    1.0,
-    2.0,
-    3.0
-]
-
-scenarios = [
-    generate_scenario()
-    for _ in range(simulations)
-]
-
-volatility_results = []
-
-
-for volatility in volatility_values:
+for limit in inventory_limits:
 
     pnls = []
     max_inventories = []
+    rejected_counts = []
 
+
+    # Every limit sees EXACTLY the same scenarios
     for scenario in scenarios:
 
-        pnl, max_inventory = run_simulation(
+        (
+            pnl,
+            max_inventory,
+            rejected
+        ) = run_simulation(
             scenario=scenario,
             k=0.25,
-            price_move_size=volatility
+            price_move_size=1,
+            inventory_limit=limit
         )
 
-        pnls.append(pnl)
-        max_inventories.append(max_inventory)
+
+        pnls.append(
+            pnl
+        )
+
+        max_inventories.append(
+            max_inventory
+        )
+
+        rejected_counts.append(
+            rejected
+        )
 
 
-    average_pnl = sum(pnls) / simulations
+    # --------------------------------------------------
+    # SUMMARY STATISTICS
+    # --------------------------------------------------
 
-    pnl_std = statistics.stdev(pnls)
+    average_pnl = (
+        sum(pnls)
+        / simulations
+    )
+
+
+    pnl_std = statistics.stdev(
+        pnls
+    )
+
 
     average_max_inventory = (
         sum(max_inventories)
         / simulations
     )
 
-    loss_probability = (
-        sum(1 for pnl in pnls if pnl < 0)
+
+    average_rejected = (
+        sum(rejected_counts)
         / simulations
     )
 
-    sorted_pnls = sorted(pnls)
 
-    fifth_percentile = sorted_pnls[
-        int(0.05 * simulations)
-    ]
+    loss_probability = (
+        sum(
+            1
+            for pnl in pnls
+            if pnl < 0
+        )
+        / simulations
+    )
 
 
-    volatility_results.append({
-        "volatility": volatility,
-        "average_pnl": average_pnl,
-        "pnl_std": pnl_std,
-        "average_max_inventory": average_max_inventory,
-        "loss_probability": loss_probability,
-        "fifth_percentile": fifth_percentile,
+    # Sort PnLs so we can find downside percentile
+    sorted_pnls = sorted(
+        pnls
+    )
+
+
+    fifth_percentile = (
+        sorted_pnls[
+            int(
+                0.05 * simulations
+            )
+        ]
+    )
+
+
+    # Save results for this limit
+    limit_results.append({
+        "limit": limit,
+
+        "average_pnl":
+            average_pnl,
+
+        "pnl_std":
+            pnl_std,
+
+        "average_max_inventory":
+            average_max_inventory,
+
+        "average_rejected":
+            average_rejected,
+
+        "loss_probability":
+            loss_probability,
+
+        "fifth_percentile":
+            fifth_percentile,
     })
 
 
-print()
-print("VOLATILITY SENSITIVITY RESULTS")
+# ==================================================
+# PRINT RESULTS
+# ==================================================
+
 print()
 
 print(
-    f"{'Move':<8}"
+    "INVENTORY LIMIT SENSITIVITY RESULTS"
+)
+
+print()
+
+
+print(
+    f"{'Limit':<8}"
     f"{'Avg PnL':<12}"
     f"{'PnL SD':<12}"
     f"{'Avg Max Inv':<14}"
-    f"{'Loss %':<12}"
+    f"{'Avg Reject':<14}"
+    f"{'Loss %':<10}"
     f"{'5th % PnL':<12}"
 )
 
-print("-" * 70)
+print("-" * 82)
 
 
-for result in volatility_results:
+for result in limit_results:
 
     print(
-        f"{result['volatility']:<8.2f}"
+        f"{result['limit']:<8}"
         f"{result['average_pnl']:<12.2f}"
         f"{result['pnl_std']:<12.2f}"
         f"{result['average_max_inventory']:<14.2f}"
-        f"{result['loss_probability'] * 100:<12.2f}"
+        f"{result['average_rejected']:<14.2f}"
+        f"{result['loss_probability'] * 100:<10.2f}"
         f"{result['fifth_percentile']:<12.2f}"
     )
