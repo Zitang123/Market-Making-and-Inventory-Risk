@@ -8,33 +8,27 @@ import statistics
 
 def generate_scenario(steps=20):
     """
-    Generates the random components of one market scenario.
+    Generate the random components of one market scenario.
 
-    These are generated separately from the strategy so that
-    different strategies/parameters can face the exact same
-    underlying randomness.
+    We generate randomness separately from the strategy so that
+    every parameter setting can face exactly the same scenarios.
     """
 
-    # Trade 1 begins with no price movement
     price_directions = [0]
-
     trade_draws = []
     order_draws = []
 
     for step in range(steps):
 
-        # From Trade 2 onwards, fair value moves up or down
         if step > 0:
             price_directions.append(
                 random.choice([-1, 1])
             )
 
-        # Determines whether a customer trades
         trade_draws.append(
             random.random()
         )
 
-        # Determines BUY vs SELL
         order_draws.append(
             random.random()
         )
@@ -55,27 +49,28 @@ def run_simulation(
     k=0.25,
     steps=20,
     price_move_size=1,
-    inventory_limit=5
+    inventory_limit=5,
+    half_spread=1
 ):
-    # Starting market parameters
+    # Starting market state
     fair_value = 100
-    half_spread = 1
 
     # Customer behaviour parameters
     customer_sensitivity = 0.2
     spread_sensitivity = 0.25
 
-    # Starting market-maker position
+    # Market-maker state
     cash = 0
     inventory = 0
 
-    # Risk statistics
+    # Risk / activity tracking
     max_abs_inventory = 0
     rejected_trades = 0
+    executed_trades = 0
 
 
     # --------------------------------------------------
-    # RUN THROUGH EACH TRADING STEP
+    # RUN THROUGH EACH STEP
     # --------------------------------------------------
 
     for trade in range(1, steps + 1):
@@ -113,16 +108,15 @@ def run_simulation(
 
 
         # ----------------------------------------------
-        # 3. PROBABILITY THAT CUSTOMER TRADES
+        # 3. TRADE PROBABILITY
         # ----------------------------------------------
 
         trade_probability = (
             1
-            - spread_sensitivity
-            * half_spread
+            - spread_sensitivity * half_spread
         )
 
-        # Keep probability valid
+        # Restrict to a valid probability range
         trade_probability = max(
             0.05,
             min(
@@ -137,12 +131,12 @@ def run_simulation(
 
 
         # ----------------------------------------------
-        # 4. CUSTOMER DECIDES WHETHER TO TRADE
+        # 4. DOES A CUSTOMER TRADE?
         # ----------------------------------------------
 
         if trade_draw < trade_probability:
 
-            # Probability that customer BUYS from us
+            # Probability customer BUYS from us
             buy_probability = (
                 0.5
                 + customer_sensitivity
@@ -174,10 +168,10 @@ def run_simulation(
 
 
             # ------------------------------------------
-            # 6. CHECK HARD INVENTORY LIMIT
+            # 6. INVENTORY-LIMIT CHECK
             # ------------------------------------------
 
-            # Customer SELL means we would BUY one more
+            # Customer SELL means we BUY one more unit
             if (
                 order == "SELL"
                 and inventory >= inventory_limit
@@ -185,7 +179,7 @@ def run_simulation(
                 rejected_trades += 1
 
 
-            # Customer BUY means we would SELL one more
+            # Customer BUY means we SELL one more unit
             elif (
                 order == "BUY"
                 and inventory <= -inventory_limit
@@ -199,18 +193,15 @@ def run_simulation(
 
             else:
 
-                # Customer SELLS to us
                 if order == "SELL":
-
                     cash -= bid
                     inventory += 1
+                    executed_trades += 1
 
-
-                # Customer BUYS from us
                 else:
-
                     cash += ask
                     inventory -= 1
+                    executed_trades += 1
 
 
         # ----------------------------------------------
@@ -236,27 +227,28 @@ def run_simulation(
     return (
         pnl,
         max_abs_inventory,
-        rejected_trades
+        rejected_trades,
+        executed_trades
     )
 
 
 # ==================================================
-# DAY 24:
-# REPEATED INVENTORY-LIMIT SENSITIVITY ANALYSIS
+# DAY 25:
+# REPEATED SPREAD SENSITIVITY ANALYSIS
 # ==================================================
 
 simulations = 1000
 
-inventory_limits = [
-    2,
-    3,
-    5,
-    10
+half_spreads = [
+    0.5,
+    1.0,
+    1.5,
+    2.0
 ]
 
 
 # --------------------------------------------------
-# GENERATE THE MARKET SCENARIOS ONCE
+# GENERATE SCENARIOS ONCE
 # --------------------------------------------------
 
 scenarios = [
@@ -265,33 +257,35 @@ scenarios = [
 ]
 
 
-# Store final results
-limit_results = []
+spread_results = []
 
 
 # --------------------------------------------------
-# TEST EACH INVENTORY LIMIT
+# TEST EACH HALF-SPREAD
 # --------------------------------------------------
 
-for limit in inventory_limits:
+for half_spread in half_spreads:
 
     pnls = []
     max_inventories = []
+    executed_counts = []
     rejected_counts = []
 
 
-    # Every limit sees EXACTLY the same scenarios
+    # Every spread sees the SAME scenarios
     for scenario in scenarios:
 
         (
             pnl,
             max_inventory,
-            rejected
+            rejected,
+            executed
         ) = run_simulation(
             scenario=scenario,
             k=0.25,
             price_move_size=1,
-            inventory_limit=limit
+            inventory_limit=5,
+            half_spread=half_spread
         )
 
 
@@ -301,6 +295,10 @@ for limit in inventory_limits:
 
         max_inventories.append(
             max_inventory
+        )
+
+        executed_counts.append(
+            executed
         )
 
         rejected_counts.append(
@@ -329,6 +327,12 @@ for limit in inventory_limits:
     )
 
 
+    average_executed = (
+        sum(executed_counts)
+        / simulations
+    )
+
+
     average_rejected = (
         sum(rejected_counts)
         / simulations
@@ -345,7 +349,6 @@ for limit in inventory_limits:
     )
 
 
-    # Sort PnLs so we can find downside percentile
     sorted_pnls = sorted(
         pnls
     )
@@ -353,22 +356,26 @@ for limit in inventory_limits:
 
     fifth_percentile = (
         sorted_pnls[
-            int(
-                0.05 * simulations
-            )
+            int(0.05 * simulations)
         ]
     )
 
 
-    # Save results for this limit
-    limit_results.append({
-        "limit": limit,
+    spread_results.append({
+        "half_spread":
+            half_spread,
+
+        "full_spread":
+            2 * half_spread,
 
         "average_pnl":
             average_pnl,
 
         "pnl_std":
             pnl_std,
+
+        "average_executed":
+            average_executed,
 
         "average_max_inventory":
             average_max_inventory,
@@ -391,33 +398,37 @@ for limit in inventory_limits:
 print()
 
 print(
-    "INVENTORY LIMIT SENSITIVITY RESULTS"
+    "SPREAD SENSITIVITY RESULTS"
 )
 
 print()
 
 
 print(
-    f"{'Limit':<8}"
+    f"{'h':<8}"
+    f"{'Spread':<10}"
     f"{'Avg PnL':<12}"
     f"{'PnL SD':<12}"
+    f"{'Avg Trades':<12}"
     f"{'Avg Max Inv':<14}"
-    f"{'Avg Reject':<14}"
+    f"{'Avg Reject':<12}"
     f"{'Loss %':<10}"
     f"{'5th % PnL':<12}"
 )
 
-print("-" * 82)
+print("-" * 100)
 
 
-for result in limit_results:
+for result in spread_results:
 
     print(
-        f"{result['limit']:<8}"
+        f"{result['half_spread']:<8.2f}"
+        f"{result['full_spread']:<10.2f}"
         f"{result['average_pnl']:<12.2f}"
         f"{result['pnl_std']:<12.2f}"
+        f"{result['average_executed']:<12.2f}"
         f"{result['average_max_inventory']:<14.2f}"
-        f"{result['average_rejected']:<14.2f}"
+        f"{result['average_rejected']:<12.2f}"
         f"{result['loss_probability'] * 100:<10.2f}"
         f"{result['fifth_percentile']:<12.2f}"
     )
